@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
-import logging
-import re
+import logging, logging.handlers
+import re, sys, os
 try:
     import urlparse
 except:
@@ -14,7 +14,30 @@ import warnings
 from amazon.api import AmazonAPI
 import dateutil.parser
 from bs4 import BeautifulSoup
-from .version import __version__  # load our version
+from .plugins import dbc #captcha plugin
+from .version import __version__ # load our version
+import cookielib, Cookie
+
+"""
+this deathbycaptcha fork was modified to work with amazon_scraper.
+specifically, input parameters (username/password) moved to config
+vars, so captcha image is now the only required parameter.
+
+configure dbc creds:
+python-deathbycaptcha/deathbycaptcha/deathbycaptcha.py: line 44
+
+configure dbc referer:
+amazon_scraper/plugins/dbc.py: line 20
+
+amazon_scraper/plugin/dbc.py hooks into
+amazon_scraper/__init__.py: line 204 - get()
+
+#unnecessary if installed via pip requirements.txt
+#git clone https://github.com/benperove/python-deathbycaptcha.git
+#sys.path.append('/my/full/path/to/python-deathbycaptcha/deathbycaptcha')
+"""
+import deathbycaptcha
+
 
 if 'unicode' not in dir(globals()['__builtins__']):
     unicode = str
@@ -29,18 +52,19 @@ log = logging.getLogger(__name__)
 # it sometimes doesn't find the asin span
 html_parser = 'html.parser'
 #html_parser = 'html5lib'
-
 #user_agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/32.0.1700.107 Safari/537.36'
-user_agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.94 Safari/537.36'
+#user_agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2062.94 Safari/537.36'
+user_agent = 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.106 Safari/537.36'
 
 amazon_base = 'http://www.amazon.com'
+referer     = 'https://amazon.com'
 
-_extract_asin_regexp = re.compile(r'(/dp/|/gp/product/)(?P<asin>[^/]+)/?')
-_process_rating_regexp = re.compile(r'([\d\.]+) out of [\d\.]+ stars', flags=re.I)
+_extract_asin_regexp         = re.compile(r'(/dp/|/gp/product/)(?P<asin>[^/]+)/?')
+_process_rating_regexp       = re.compile(r'([\d\.]+) out of [\d\.]+ stars', flags=re.I)
 _extract_reviews_asin_regexp = re.compile(r'/product-reviews/(?P<asin>[^/]+)', flags=re.I)
-_extract_review_id_regexp = re.compile(r'/review/(?P<id>[^/]+)', flags=re.I)
-_extract_reviewer_id_regexp = re.compile(r'/member-reviews/(?P<id>[^/]+)', flags=re.I)
-_price_regexp = re.compile(r'(?P<price>[$£][\d,\.]+)', flags=re.I)
+_extract_review_id_regexp    = re.compile(r'/review/(?P<id>[^/]+)', flags=re.I)
+_extract_reviewer_id_regexp  = re.compile(r'/member-reviews/(?P<id>[^/]+)', flags=re.I)
+_price_regexp                = re.compile(r'(?P<price>[$£][\d,\.]+)', flags=re.I)
 
 
 def extract_asin(url):
@@ -149,6 +173,7 @@ def strip_html_tags(html):
         soup = BeautifulSoup(html, html_parser)
         text = soup.findAll(text=True)
         text = u'\n'.join(text).strip()
+        print text
         return text
     return None
 
@@ -179,9 +204,14 @@ def retry(retries=5, exceptions=None):
 def get(url, api):
     rate_limit(api)
     # verify=False ignores SSL errors
-    r = requests.get(url, headers={'User-Agent': user_agent}, verify=False)
-    r.raise_for_status()
-    return r
+    session = requests.Session() #added to mitigate captcha likelihood
+    r = requests.get(url, headers={'User-Agent': user_agent, 'Referer': referer}, verify=False)
+    t = dbc.Dbc(url, r) #instantite dbc plugin with request url & requests.get response
+    #enable either t.check() or t.process() not both
+    c = t.check() #captcha detection enabled, strictly passthrough/informational for testing
+    #c = t.process() #captchas detected & solved
+    c.raise_for_status()
+    return c
 
 
 def is_property(obj, k):
@@ -191,7 +221,6 @@ def is_property(obj, k):
         if isinstance(getattr(obj.__class__, k), property):
             return True
     return False
-
 
 def dict_acceptable(obj, k, blacklist=None):
     # don't store blacklisted variables
@@ -222,7 +251,6 @@ from amazon_scraper.product import Product
 from amazon_scraper.reviews import Reviews
 from amazon_scraper.review import Review
 from amazon_scraper.user_reviews import UserReviews
-
 
 class AmazonScraper(object):
 
@@ -271,3 +299,5 @@ class AmazonScraper(object):
     @property
     def bottlenose(self):
         return self.api.api
+
+

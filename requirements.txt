@@ -1,2 +1,3 @@
 -e git+https://github.com/yoavaviram/python-amazon-simple-product-api.git#egg=python-amazon-simple-product-api
+-e git+https://github.com/benperove/python-deathbycaptcha.git#egg=python-deathbycaptcha
 -e .
